@@ -9,6 +9,12 @@ import { createRouter as coreCreateRouter, parseArgs } from "./createRouter";
 import { TypeRouteError } from "./TypeRouteError";
 import * as React from "react";
 import { attemptScrollToTop } from "./attemptScrollToTop";
+import { createForwardingProxy } from "./tools/createForwardingProxy";
+
+import * as types from "./types";
+
+export type { types };
+export { coreCreateRouter };
 
 if (typeof __DEV__ === "boolean" && __DEV__) {
   const [major, minor] = React.version
@@ -35,13 +41,18 @@ export {
 } from "./types";
 
 type Router<TRouteDefCollection extends { [routeName: string]: any }> =
-  CoreRouter<TRouteDefCollection> & {
+  Omit<CoreRouter<TRouteDefCollection>, "stopListening"> & {
     /**
      * React hook for retrieving the current route.
      *
      * @see https://type-route.zilch.dev/api-reference/router/use-route
      */
     useRoute: () => RouteDefCollectionRoute<TRouteDefCollection>;
+
+    /**
+     * Get current route synchronously outside of react.
+     */
+    getRoute: () => RouteDefCollectionRoute<TRouteDefCollection>;
 
     /**
      * React component which connects React to Type Route and provides the current route to the rest of the application.
@@ -51,6 +62,22 @@ type Router<TRouteDefCollection extends { [routeName: string]: any }> =
     RouteProvider: (props: { children?: any }) => any;
   };
 type UmbrellaRouter = Router<UmbrellaRouteDefCollection>;
+
+const fpRoutes = createForwardingProxy<UmbrellaRouter["routes"]>({
+  isFunction: false
+});
+const fpSession = createForwardingProxy<UmbrellaRouter["session"]>({
+  isFunction: false
+});
+const fpRouteProvider = createForwardingProxy<UmbrellaRouter["RouteProvider"]>({
+  isFunction: true
+});
+const fpUseRoute = createForwardingProxy<UmbrellaRouter["useRoute"]>({
+  isFunction: true
+});
+const fpGetRoute = createForwardingProxy<UmbrellaRouter["getRoute"]>({
+  isFunction: true
+});
 
 export function createRouter<
   TRouteDefCollection extends { [routeName: string]: any }
@@ -63,19 +90,13 @@ export function createRouter<
 ): Router<TRouteDefCollection>;
 export function createRouter(...args: any[]): UmbrellaRouter {
   const { opts, routeDefs } = parseArgs(args);
-  const router = coreCreateRouter({ ...opts, scrollToTop: false }, routeDefs);
+  const { routes, session, getRoute } = coreCreateRouter({ ...opts, scrollToTop: false }, routeDefs);
   const routeContext = React.createContext<UmbrellaRoute | null>(null);
 
-  return {
-    ...router,
-    RouteProvider,
-    useRoute,
-  };
-
   function RouteProvider(props: { children?: any }) {
-    const [route, setRoute] = React.useState(router.session.getInitialRoute());
+    const [route, setRoute] = React.useState(session.getInitialRoute());
 
-    React.useLayoutEffect(() => router.session.listen(setRoute), []);
+    React.useLayoutEffect(() => session.listen(setRoute), []);
 
     React.useEffect(() => {
       attemptScrollToTop(route, opts.scrollToTop);
@@ -99,4 +120,19 @@ export function createRouter(...args: any[]): UmbrellaRouter {
 
     return route!;
   }
+
+  fpRoutes.updateTarget(routes);
+  fpSession.updateTarget(session);
+  fpRouteProvider.updateTarget(RouteProvider);
+  fpUseRoute.updateTarget(useRoute);
+  fpGetRoute.updateTarget(getRoute);
+
+  return {
+    routes: fpRoutes.proxy,
+    session: fpSession.proxy,
+    RouteProvider: fpRouteProvider.proxy,
+    useRoute: fpUseRoute.proxy,
+    getRoute: fpGetRoute.proxy
+  };
+
 }

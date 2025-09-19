@@ -87,9 +87,8 @@ export function createRouter(...args: any[]): UmbrellaCoreRouter {
 
   const routes = createRouteBuilderCollection(getRouterContext);
 
-  const router: UmbrellaCoreRouter = {
-    routes,
-    session: {
+  const session: UmbrellaCoreRouter["session"] = {
+
       push(href, state) {
         if (__DEV__) {
           assert("[RouterSessionHistory].push", [
@@ -213,7 +212,26 @@ export function createRouter(...args: any[]): UmbrellaCoreRouter {
         };
       },
       listen: (handler) => navigationHandlerManager.add(handler),
-    },
+
+  };
+
+  const { getRoute } = (() => {
+    let route_current = session.getInitialRoute();
+
+    session.listen(route => (route_current = route));
+
+    function getRoute() {
+        return route_current;
+    }
+
+    return { getRoute };
+  })();
+
+  const router: UmbrellaCoreRouter = {
+    routes,
+    session,
+    stopListening: ()=> unlisten?.(),
+    getRoute
   };
 
   return router;

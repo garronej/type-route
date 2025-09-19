@@ -570,6 +570,10 @@ export type CoreRouter<
   };
 
   session: RouterSession<TRouteDefCollection>;
+
+  stopListening: ()=> void;
+
+  getRoute: ()=> RouteDefCollectionRoute<TRouteDefCollection>
 };
 
 export type UmbrellaCoreRouter = CoreRouter<UmbrellaRouteDefCollection>;

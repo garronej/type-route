@@ -12,3 +12,4 @@ cp -r ../../type-route/dist   node_modules/type-route/
 cp -r ../../type-route/src   node_modules/type-route/
 mv node_modules/type-route/dist/core node_modules/type-route/
 npx patch-package type-route
+yarn dev
