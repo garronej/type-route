@@ -1,15 +1,13 @@
 import { UmbrellaRoute } from "./types";
 
 export function attemptScrollToTop(
-  route: UmbrellaRoute,
-  scrollToTop: boolean | undefined
+  route: UmbrellaRoute
 ) {
   if (
     route.action === "push" &&
     typeof window === "object" &&
     window !== null &&
     typeof window.scroll === "function" &&
-    scrollToTop !== false &&
     typeof navigator === "object" &&
     navigator !== null &&
     typeof navigator.userAgent === "string" &&

@@ -315,7 +315,9 @@ export function createRouter(...args: any[]): UmbrellaCoreRouter {
       handler(route);
     }
 
-    attemptScrollToTop(route, opts.scrollToTop);
+    if( opts.scrollToTop === true){
+      attemptScrollToTop(route);
+    }
 
     previousRoute = route;
   }

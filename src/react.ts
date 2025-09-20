@@ -1,7 +1,6 @@
 import {
   CoreRouter,
   UmbrellaRouteDefCollection,
-  UmbrellaRoute,
   RouteDefCollectionRoute,
   RouterOpts,
 } from "./types";
@@ -10,6 +9,7 @@ import { TypeRouteError } from "./TypeRouteError";
 import * as React from "react";
 import { attemptScrollToTop } from "./attemptScrollToTop";
 import { createForwardingProxy } from "./tools/createForwardingProxy";
+import { assert } from "./tools/assert";
 
 import * as types from "./types";
 
@@ -48,18 +48,6 @@ type Router<TRouteDefCollection extends { [routeName: string]: any }> =
      * @see https://type-route.zilch.dev/api-reference/router/use-route
      */
     useRoute: () => RouteDefCollectionRoute<TRouteDefCollection>;
-
-    /**
-     * Get current route synchronously outside of react.
-     */
-    getRoute: () => RouteDefCollectionRoute<TRouteDefCollection>;
-
-    /**
-     * React component which connects React to Type Route and provides the current route to the rest of the application.
-     *
-     * @see https://type-route.zilch.dev/api-reference/router/route-provider
-     */
-    RouteProvider: (props: { children?: any }) => any;
   };
 type UmbrellaRouter = Router<UmbrellaRouteDefCollection>;
 
@@ -69,15 +57,14 @@ const fpRoutes = createForwardingProxy<UmbrellaRouter["routes"]>({
 const fpSession = createForwardingProxy<UmbrellaRouter["session"]>({
   isFunction: false
 });
-const fpRouteProvider = createForwardingProxy<UmbrellaRouter["RouteProvider"]>({
-  isFunction: true
-});
-const fpUseRoute = createForwardingProxy<UmbrellaRouter["useRoute"]>({
-  isFunction: true
-});
 const fpGetRoute = createForwardingProxy<UmbrellaRouter["getRoute"]>({
   isFunction: true
 });
+
+const routeUpdateHandlers: (()=> void)[] = [];
+
+let sessionUnlisten: (()=> void) | undefined = undefined;
+let effect: (() => void) | undefined = undefined;
 
 export function createRouter<
   TRouteDefCollection extends { [routeName: string]: any }
@@ -89,50 +76,59 @@ export function createRouter<
   routeDefs: TRouteDefCollection
 ): Router<TRouteDefCollection>;
 export function createRouter(...args: any[]): UmbrellaRouter {
+
   const { opts, routeDefs } = parseArgs(args);
-  const { routes, session, getRoute } = coreCreateRouter({ ...opts, scrollToTop: false }, routeDefs);
-  const routeContext = React.createContext<UmbrellaRoute | null>(null);
+  const { routes, session, getRoute } = coreCreateRouter(
+    { ...opts, scrollToTop: false },
+    routeDefs
+  );
 
-  function RouteProvider(props: { children?: any }) {
-    const [route, setRoute] = React.useState(session.getInitialRoute());
+  sessionUnlisten?.();
+  sessionUnlisten =session.listen((route) => {
+    routeUpdateHandlers.forEach((routeUpdateHandler) => routeUpdateHandler());
 
-    React.useLayoutEffect(() => session.listen(setRoute), []);
-
-    React.useEffect(() => {
-      attemptScrollToTop(route, opts.scrollToTop);
-    }, [route]);
-
-    return React.createElement(
-      routeContext.Provider,
-      { value: route },
-      props.children
-    );
-  }
-
-  function useRoute() {
-    const route = React.useContext(routeContext);
-
-    if (__DEV__) {
-      if (route === null) {
-        throw TypeRouteError.App_should_be_wrapped_in_a_RouteProvider_component.create();
-      }
+    if (opts.scrollToTop === true) {
+      effect = () => {
+        effect = undefined;
+        attemptScrollToTop(route);
+      };
     }
-
-    return route!;
-  }
+  });
 
   fpRoutes.updateTarget(routes);
   fpSession.updateTarget(session);
-  fpRouteProvider.updateTarget(RouteProvider);
-  fpUseRoute.updateTarget(useRoute);
   fpGetRoute.updateTarget(getRoute);
 
   return {
     routes: fpRoutes.proxy,
     session: fpSession.proxy,
-    RouteProvider: fpRouteProvider.proxy,
-    useRoute: fpUseRoute.proxy,
-    getRoute: fpGetRoute.proxy
+    getRoute: fpGetRoute.proxy,
+    useRoute,
   };
+}
 
+function useRoute() {
+  const route = fpGetRoute.proxy();
+
+  const [, reRender] = React.useReducer((count) => count + 1, 0);
+
+  React.useLayoutEffect(() => {
+    const routeUpdateHandler = () => {
+      reRender();
+    };
+
+    routeUpdateHandlers.push(routeUpdateHandler);
+
+    return () => {
+      const index = routeUpdateHandlers.indexOf(routeUpdateHandler);
+      assert(index !== -1);
+      routeUpdateHandlers.splice(index, 1);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    effect?.();
+  }, [route]);
+
+  return route;
 }
