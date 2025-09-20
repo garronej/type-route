@@ -8,8 +8,7 @@ import { createRouter as coreCreateRouter, parseArgs } from "./createRouter";
 import { TypeRouteError } from "./TypeRouteError";
 import * as React from "react";
 import { attemptScrollToTop } from "./attemptScrollToTop";
-import { createForwardingProxy } from "./tools/createForwardingProxy";
-import { assert } from "./tools/assert";
+import type { UnionToIntersection } from "./tools/UnionToIntersection";
 
 import * as types from "./types";
 
@@ -51,20 +50,26 @@ type Router<TRouteDefCollection extends { [routeName: string]: any }> =
   };
 type UmbrellaRouter = Router<UmbrellaRouteDefCollection>;
 
-const fpRoutes = createForwardingProxy<UmbrellaRouter["routes"]>({
-  isFunction: false
-});
-const fpSession = createForwardingProxy<UmbrellaRouter["session"]>({
-  isFunction: false
-});
-const fpGetRoute = createForwardingProxy<UmbrellaRouter["getRoute"]>({
-  isFunction: true
-});
+export function mergeRouteDefs<
+  TPageCollection extends { [pageName: string]: { routeDefs: { [routeName: string]: any } } }
+>(
+  params: { pages: TPageCollection; }
+): { routeDefs: UnionToIntersection<TPageCollection[keyof TPageCollection]["routeDefs"]> }{
 
-const routeUpdateHandlers: (()=> void)[] = [];
+  const { pages } = params;
 
-let sessionUnlisten: (()=> void) | undefined = undefined;
-let effect: (() => void) | undefined = undefined;
+  const routeDefs = {};
+
+  Object.keys(pages).forEach((pageName) =>
+    Object.assign(routeDefs, pages[pageName].routeDefs)
+  );
+
+  // @ts-expect-error
+  return { routeDefs };
+}
+
+// NOTE: For HMR, we want stable reference.  
+let router: UmbrellaRouter | undefined = undefined;
 
 export function createRouter<
   TRouteDefCollection extends { [routeName: string]: any }
@@ -76,6 +81,9 @@ export function createRouter<
   routeDefs: TRouteDefCollection
 ): Router<TRouteDefCollection>;
 export function createRouter(...args: any[]): UmbrellaRouter {
+  if (router !== undefined) {
+    return router;
+  }
 
   const { opts, routeDefs } = parseArgs(args);
   const { routes, session, getRoute } = coreCreateRouter(
@@ -83,52 +91,38 @@ export function createRouter(...args: any[]): UmbrellaRouter {
     routeDefs
   );
 
-  sessionUnlisten?.();
-  sessionUnlisten =session.listen((route) => {
-    routeUpdateHandlers.forEach((routeUpdateHandler) => routeUpdateHandler());
+  let effect: (() => void) | undefined = undefined;
 
-    if (opts.scrollToTop === true) {
+  if (opts.scrollToTop === true) {
+    session.listen((route) => {
       effect = () => {
         effect = undefined;
         attemptScrollToTop(route);
       };
-    }
-  });
+    });
+  }
 
-  fpRoutes.updateTarget(routes);
-  fpSession.updateTarget(session);
-  fpGetRoute.updateTarget(getRoute);
+  function useRoute() {
+    const route = getRoute();
 
-  return {
-    routes: fpRoutes.proxy,
-    session: fpSession.proxy,
-    getRoute: fpGetRoute.proxy,
+    const [, reRender] = React.useReducer((count) => count + 1, 0);
+
+    React.useLayoutEffect(() => session.listen(() => reRender()), []);
+
+    React.useEffect(() => {
+      effect?.();
+    }, [route]);
+
+    return route;
+  }
+
+  router = {
+    routes,
+    session,
+    getRoute,
     useRoute,
   };
+
+  return router;
 }
 
-function useRoute() {
-  const route = fpGetRoute.proxy();
-
-  const [, reRender] = React.useReducer((count) => count + 1, 0);
-
-  React.useLayoutEffect(() => {
-    const routeUpdateHandler = () => {
-      reRender();
-    };
-
-    routeUpdateHandlers.push(routeUpdateHandler);
-
-    return () => {
-      const index = routeUpdateHandlers.indexOf(routeUpdateHandler);
-      assert(index !== -1);
-      routeUpdateHandlers.splice(index, 1);
-    };
-  }, []);
-
-  React.useEffect(() => {
-    effect?.();
-  }, [route]);
-
-  return route;
-}
