@@ -107,7 +107,20 @@ export function createRouter(...args: any[]): UmbrellaRouter {
 
     const [, reRender] = React.useReducer((count) => count + 1, 0);
 
-    React.useLayoutEffect(() => session.listen(() => reRender()), []);
+    // `route` is deliberately the snapshot from the mount render. Once the
+    // subscription exists, subsequent route changes are handled by it.
+    React.useLayoutEffect(() => {
+      const unlisten = session.listen(() => reRender());
+
+      // Navigation may occur while a descendant is rendering, after this hook
+      // read the route but before this subscription was registered. Re-read the
+      // route after subscribing so that such an update cannot be missed.
+      if (getRoute() !== route) {
+        reRender();
+      }
+
+      return unlisten;
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     React.useEffect(() => {
       effect?.();
@@ -125,4 +138,3 @@ export function createRouter(...args: any[]): UmbrellaRouter {
 
   return router;
 }
-
